@@ -314,6 +314,30 @@
   #viewToggle:hover{ border-color:var(--brass); transform:rotate(90deg); }
   #viewToggle svg{ width:18px; height:18px; }
 
+  /* download-as-image button */
+  #downloadBtn{
+    position:fixed;
+    bottom:1.5rem; right:1.5rem;
+    z-index:9;
+    width:46px; height:46px;
+    border-radius:50%;
+    background:var(--ink-2);
+    border:1px solid var(--border);
+    color:var(--brass);
+    font-size:0.9rem;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    box-shadow:0 8px 20px -6px rgba(0,0,0,0.6);
+    transition:transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  #downloadBtn:hover{
+    border-color:var(--brass);
+    transform:scale(1.1);
+    box-shadow:0 0 0 6px color-mix(in srgb, var(--brass) 14%, transparent);
+  }
+  #downloadBtn:active{ transform:scale(0.95); }
+  #downloadBtn.busy{ opacity:0.6; pointer-events:none; }
+
   /* theme toggle menu */
   #themeToggle{
     position:fixed;
@@ -647,6 +671,8 @@
     </svg>
   </button>
 
+  <button id="downloadBtn" title="Download as image" aria-label="Download shayari as image">●</button>
+
   <!-- ============ MAIN ============ -->
   <main id="main">
     <header class="top">
@@ -714,6 +740,7 @@
   const cardView = document.getElementById('cardView');
   const gridView = document.getElementById('gridView');
   const viewToggle = document.getElementById('viewToggle');
+  const downloadBtn = document.getElementById('downloadBtn');
   const themeToggle = document.getElementById('themeToggle');
   const themeMenu = document.getElementById('themeMenu');
 
@@ -861,11 +888,197 @@
       cardView.style.display = 'none';
       gridView.classList.add('visible');
       renderGrid();
+      downloadBtn.style.display = 'none';
     }else{
       gridView.classList.remove('visible');
       cardView.style.display = '';
+      downloadBtn.style.display = '';
     }
   };
+
+  function wrapCanvasText(ctx, text, maxWidth){
+    const words = text.split(' ');
+    const out = [];
+    let line = '';
+    for(const word of words){
+      const test = line ? line + ' ' + word : word;
+      if(ctx.measureText(test).width > maxWidth && line){
+        out.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if(line) out.push(line);
+    return out;
+  }
+
+  async function downloadShayariImage(){
+    if(!filtered.length) return;
+    const s = filtered[currentIndex];
+    downloadBtn.classList.add('busy');
+
+    try{
+      if(document.fonts && document.fonts.ready){
+        await document.fonts.ready;
+      }
+    }catch(e){ /* ignore, canvas will fall back to default fonts */ }
+
+    const css = getComputedStyle(document.body);
+    const colInk = css.getPropertyValue('--ink').trim() || '#1B1712';
+    const colInk2 = css.getPropertyValue('--ink-2').trim() || '#221C15';
+    const colPaper = css.getPropertyValue('--paper').trim() || '#EDE3D0';
+    const colBrass = css.getPropertyValue('--brass').trim() || '#B8963E';
+    const colMaroon = css.getPropertyValue('--maroon-bright').trim() || '#B84B4B';
+    const colBorder = css.getPropertyValue('--border').trim() || '#3A3226';
+
+    const W = 1080, H = 1350;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // background
+    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    bgGrad.addColorStop(0, colInk);
+    bgGrad.addColorStop(1, colInk2);
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // panel
+    const pad = 70;
+    const panelX = pad, panelY = pad * 2.1, panelW = W - pad*2, panelH = H - pad*4.2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 50;
+    ctx.fillStyle = colInk2;
+    roundRect(ctx, panelX, panelY, panelW, panelH, 22);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = colBorder;
+    ctx.lineWidth = 2;
+    roundRect(ctx, panelX, panelY, panelW, panelH, 22);
+    ctx.stroke();
+
+    // top accent line
+    ctx.strokeStyle = colBrass;
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(panelX + panelW*0.15, panelY);
+    ctx.lineTo(panelX + panelW*0.85, panelY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // quote marks
+    ctx.fillStyle = colBrass;
+    ctx.globalAlpha = 0.3;
+    ctx.font = '64px Georgia, serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText('\u275D', panelX + 28, panelY + 18);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('\u275E', panelX + panelW - 28, panelY + panelH - 18);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.globalAlpha = 1;
+
+    // shayari text
+    const lines = s.text.split('\n');
+    const fontSize = lines.length > 6 ? 40 : 48;
+    ctx.font = `${fontSize}px 'Noto Serif Devanagari', serif`;
+    ctx.fillStyle = colPaper;
+    ctx.textAlign = 'center';
+    const maxTextWidth = panelW - 160;
+
+    let wrapped = [];
+    lines.forEach(l => {
+      if(l.trim() === ''){ wrapped.push(''); return; }
+      wrapped = wrapped.concat(wrapCanvasText(ctx, l, maxTextWidth));
+    });
+
+    const lineHeight = fontSize * 1.7;
+    const textBlockHeight = wrapped.length * lineHeight;
+    const authorBlockHeight = 130;
+    const tagsBlockHeight = (s.tags && s.tags.length) ? 70 : 0;
+    const contentHeight = textBlockHeight + authorBlockHeight + tagsBlockHeight;
+    let cursorY = panelY + (panelH - contentHeight) / 2 + fontSize;
+
+    wrapped.forEach(line => {
+      ctx.fillText(line, W/2, cursorY);
+      cursorY += lineHeight;
+    });
+
+    // author rule
+    cursorY += 10;
+    ctx.strokeStyle = colBrass;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(W/2 - 45, cursorY);
+    ctx.lineTo(W/2 + 45, cursorY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // author name
+    cursorY += 46;
+    ctx.font = `italic 34px 'Cormorant Garamond', serif`;
+    ctx.fillStyle = colBrass;
+    ctx.fillText(s.author || 'Unknown', W/2, cursorY);
+
+    // tags
+    if(s.tags && s.tags.length){
+      cursorY += 56;
+      ctx.font = `26px 'Cormorant Garamond', serif`;
+      const tagTexts = s.tags.map(t => t);
+      const tagWidths = tagTexts.map(t => ctx.measureText(t).width + 36);
+      const totalW = tagWidths.reduce((a,b)=>a+b, 0) + (tagTexts.length-1)*14;
+      let tx = W/2 - totalW/2;
+      tagTexts.forEach((t, i) => {
+        const tw = tagWidths[i];
+        ctx.strokeStyle = colMaroon;
+        ctx.lineWidth = 2;
+        roundRect(ctx, tx, cursorY - 34, tw, 44, 22);
+        ctx.stroke();
+        ctx.fillStyle = colMaroon;
+        ctx.textAlign = 'center';
+        ctx.fillText(t, tx + tw/2, cursorY - 4);
+        tx += tw + 14;
+      });
+    }
+
+    // watermark
+    ctx.font = `600 24px 'Cormorant Garamond', serif`;
+    ctx.fillStyle = colBrass;
+    ctx.globalAlpha = 0.85;
+    ctx.textAlign = 'center';
+    ctx.fillText('Ek Lafz', W/2, H - pad*1.3);
+    ctx.globalAlpha = 1;
+
+    // trigger download
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ek-lafz-shayari.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      downloadBtn.classList.remove('busy');
+    }, 'image/png');
+  }
+
+  function roundRect(ctx, x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+  }
+
+  downloadBtn.onclick = () => { downloadShayariImage(); };
 
   async function loadData(){
     try{
