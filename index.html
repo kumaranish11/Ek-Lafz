@@ -317,17 +317,17 @@
   /* download-as-image button */
   #downloadBtn{
     position:fixed;
-    bottom:1.5rem; right:1.5rem;
+    bottom:1.25rem; right:1.25rem;
     z-index:9;
-    width:46px; height:46px;
+    width:30px; height:30px;
     border-radius:50%;
     background:var(--ink-2);
     border:1px solid var(--border);
     color:var(--brass);
-    font-size:0.9rem;
+    font-size:0.5rem;
     display:flex; align-items:center; justify-content:center;
     cursor:pointer;
-    box-shadow:0 8px 20px -6px rgba(0,0,0,0.6);
+    box-shadow:0 6px 14px -6px rgba(0,0,0,0.6);
     transition:transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
   }
   #downloadBtn:hover{
@@ -622,6 +622,12 @@
   @media (prefers-reduced-motion: reduce){
     *{ animation-duration:0.01ms !important; transition-duration:0.01ms !important; }
   }
+
+  @media (max-width:420px){
+    #main{ padding-left:1rem; padding-right:1rem; }
+    .shayari-card{ padding-left:1.1rem; padding-right:1.1rem; }
+    header.top{ margin-left:-1rem; margin-right:-1rem; padding-left:1rem; padding-right:1rem; }
+  }
 </style>
 </head>
 <body>
@@ -815,6 +821,58 @@
     counter.textContent = `${currentIndex+1} / ${filtered.length}`;
     prevBtn.disabled = currentIndex === 0;
     nextBtn.disabled = currentIndex === filtered.length - 1;
+
+    fitCardText(textEl, lines);
+  }
+
+  // Shrinks the shayari font just enough that each original line stays
+  // on one row, instead of the browser wrapping long lines onto two.
+  function fitCardText(textEl, lines, _retries){
+    _retries = _retries || 0;
+    const apply = () => {
+      const cardStyles = getComputedStyle(cardHolder);
+      const paddingL = parseFloat(cardStyles.paddingLeft) || 0;
+      const paddingR = parseFloat(cardStyles.paddingRight) || 0;
+      const available = cardHolder.clientWidth - paddingL - paddingR - 16;
+
+      if(available <= 0){
+        // Card isn't laid out yet (e.g. still behind display:none).
+        // Try again shortly instead of leaving the default size in place.
+        if(_retries < 20){
+          setTimeout(() => fitCardText(textEl, lines, _retries + 1), 100);
+        }
+        return;
+      }
+
+      const measureCanvas = fitCardText._canvas || (fitCardText._canvas = document.createElement('canvas'));
+      const ctx = measureCanvas.getContext('2d');
+      const family = "'Noto Serif Devanagari', serif";
+      const maxFont = 30;  // px, ~1.85rem
+      const minFont = 14;  // px floor for readability
+
+      let fontSize = maxFont;
+      while(fontSize > minFont){
+        ctx.font = `${fontSize}px ${family}`;
+        let widest = 0;
+        for(const line of lines){
+          const w = ctx.measureText(line).width;
+          if(w > widest) widest = w;
+        }
+        if(widest <= available) break;
+        fontSize -= 1;
+      }
+      textEl.style.fontSize = fontSize + 'px';
+    };
+
+    // Run immediately — don't wait on font loading, which can stall or
+    // fail on a flaky connection and leave the text unfixed.
+    requestAnimationFrame(apply);
+
+    // Once the real webfont is actually in, re-measure with it — metrics
+    // can shift slightly from the fallback serif used above.
+    if(document.fonts && document.fonts.ready){
+      document.fonts.ready.then(() => requestAnimationFrame(apply)).catch(() => {});
+    }
   }
 
   function renderGrid(){
@@ -1080,6 +1138,17 @@
 
   downloadBtn.onclick = () => { downloadShayariImage(); };
 
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const textEl = cardHolder.querySelector('.shayari-text');
+      if(textEl && filtered.length){
+        fitCardText(textEl, filtered[currentIndex].text.split('\n'));
+      }
+    }, 150);
+  });
+
   async function loadData(){
     try{
       const res = await fetch(DATA_URL, { cache: "no-store" });
@@ -1113,6 +1182,18 @@
     main.style.clipPath = `circle(0px at ${cx}px ${cy}px)`;
     main.classList.add('visible');
     welcome.classList.add('leaving');
+
+    // The card may have been rendered earlier while #main was still
+    // display:none (e.g. data finished loading before Enter was clicked),
+    // in which case its width read as 0 and text sizing was skipped.
+    // Now that #main is actually laid out, re-fit the current card.
+    requestAnimationFrame(() => {
+      const textEl = cardHolder.querySelector('.shayari-text');
+      if(textEl && filtered.length){
+        fitCardText(textEl, filtered[currentIndex].text.split('\n'));
+      }
+    });
+
     requestAnimationFrame(() => {
       main.style.transition = 'clip-path 0.9s cubic-bezier(.4,0,.2,1)';
       main.style.clipPath = `circle(150% at ${cx}px ${cy}px)`;
